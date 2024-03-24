@@ -9,8 +9,18 @@ chmod 600 mongodb.key
 
 mkdir data > /dev/null 2>&1
 
-declare -a copies=(a b c)
-declare -a shards=(01 02 03 04)
+declare -a copies=(a b) # c)
+declare -a shards=(01 02) # 03 04)
+
+# entrypoint:
+#         - /bin/bash
+#         - -c
+#         - |
+#           chmod 400 /mongodb.key
+#           chown 1000:1000 /mongodb.key
+#           echo "Done"
+#           ls -al
+
 
 ##
 ## Generate the docker-compose file, and init scripts, so we can vary shard count
@@ -24,11 +34,13 @@ for copy in ${copies[@]}
 do
   echo "  mongo-configserver-${copy}:" >> docker-compose.yml
   echo "    image: mongo" >> docker-compose.yml
+  #echo "    hostname: mongo-configserver-${copy}" >> docker-compose.yml
   echo "    command: mongod --auth --port 27017 --configsvr --replSet mongo-configserver --dbpath /data/db --keyFile /mongodb.key" >> docker-compose.yml
   echo "    volumes:" >> docker-compose.yml
   echo "        - ./mongodb.key:/mongodb.key" >> docker-compose.yml
   echo "        - ./mongo-configserver.init.js:/mongo-configserver.init.js" >> docker-compose.yml
   echo "        - ./data/mongo-configserver-${copy}:/data/db" >> docker-compose.yml
+  echo "    entrypoint: ["/bin/bash", "-c"]" >> docker-compose.yml
   if [ "x$cfgurl" == "x" ]
   then
     true
@@ -49,21 +61,25 @@ do
   do
     echo "  mongo-shard-${shard}${copy}:" >> docker-compose.yml
     echo "    image: mongo" >> docker-compose.yml
+    ##echo "    hostname: mongo-shard-${shard}${copy}" >> docker-compose.yml
     echo "    command: mongod --auth --port ${shardn} --shardsvr --replSet mongo-shard-${shard} --dbpath /data/db  --keyFile /mongodb.key" >> docker-compose.yml
     echo "    volumes:" >> docker-compose.yml
     echo "        - ./mongodb.key:/mongodb.key" >> docker-compose.yml
     echo "        - ./mongo-shard-${shard}.init.js:/mongo-shard-${shard}.init.js" >> docker-compose.yml
     echo "        - ./data/mongo-shard-${shard}${copy}:/data/db" >> docker-compose.yml
+    echo "    entrypoint: ["/bin/bash", "-c"]" >> docker-compose.yml
   done
 done
 echo "  mongo-router-01:" >> docker-compose.yml
 echo "    image: mongo" >> docker-compose.yml
-echo "    command: mongos --port 27017 --configdb mongo-configserver/${cfgurl} --keyFile /mongodb.key" >> docker-compose.yml
+#echo "    hostname: mongo-router-01" >> docker-compose.yml
+echo "    command: mongos --port 27017 --configdb \"mongo-configserver/${cfgurl}\" --keyFile /mongodb.key" >> docker-compose.yml
 echo "    volumes:" >> docker-compose.yml
 echo "        - ./mongodb.key:/mongodb.key" >> docker-compose.yml
 echo "        - ./mongo-sharding.init.js:/mongo-sharding.init.js" >> docker-compose.yml
 echo "        - ./mongo-auth.init.js:/mongo-auth.init.js" >> docker-compose.yml
 echo "        - ./data/mongo-router-01:/data/db" >> docker-compose.yml
+echo "    entrypoint: ["/bin/bash", "-c"]" >> docker-compose.yml
 echo "    depends_on:" >> docker-compose.yml
 for copy in ${copies[@]}
 do
@@ -103,19 +119,19 @@ done
 #
 # All files are now created.  Do the setup.
 # 
-docker-compose up -d 
-sleep 60
+docker-compose -p mongodbdocker up -d 
+sleep 20
 echo seed the config server
-docker exec -it mongodbdocker_mongo-configserver-a_1 sh -c "/usr/bin/mongo --port 27017 < /mongo-configserver.init.js"
+docker exec -it mongodbdocker-mongo-configserver-a-1 sh -c "/usr/bin/mongosh --port 27017 < /mongo-configserver.init.js"
 shardn=27017
 for shard in ${shards[@]}
 do
   shardn=$((shardn+1))
   echo seed shard ${shard}
-  docker exec -it mongodbdocker_mongo-shard-${shard}a_1 sh -c "/usr/bin/mongo --port ${shardn} < /mongo-shard-${shard}.init.js" 
+  docker exec -it mongodbdocker-mongo-shard-${shard}a-1 sh -c "/usr/bin/mongosh --port ${shardn} < /mongo-shard-${shard}.init.js" 
 done
 sleep 15
 echo configure router sharding
-docker exec -it mongodbdocker_mongo-router-01_1 sh -c "/usr/bin/mongo --port 27017 < /mongo-sharding.init.js"
+docker exec -it mongodbdocker-mongo-router-01-1 sh -c "/usr/bin/mongosh --port 27017 < /mongo-sharding.init.js"
 echo auth init
-docker exec -it mongodbdocker_mongo-router-01_1 sh -c "/usr/bin/mongo --port 27017 < /mongo-auth.init.js"
+docker exec -it mongodbdocker-mongo-router-01-1 sh -c "/usr/bin/mongosh --port 27017 < /mongo-auth.init.js"
